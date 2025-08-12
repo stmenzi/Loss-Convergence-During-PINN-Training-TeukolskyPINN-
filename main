@@ -1,0 +1,70 @@
+import torch
+import torch.nn as nn
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Parameters based on Berti (2009), scalar QNM (s=0)
+a = 0.7           # Spin
+m = 0             # Azimuthal number
+omega = 0.5       # Real part of QNM frequency
+E = 2.0           # Angular eigenvalue
+
+# PINN model
+class TeukolskyPINN(nn.Module):
+    def __init__(self):
+        super(TeukolskyPINN, self).__init__()
+        self.net = nn.Sequential(
+            nn.Linear(1, 50),
+            nn.Tanh(),
+            nn.Linear(50, 50),
+            nn.Tanh(),
+            nn.Linear(50, 1)
+        )
+
+    def forward(self, theta):
+        return self.net(theta)
+
+# Residual of Teukolsky equation
+def teukolsky_loss(model, theta):
+    theta.requires_grad = True
+    S = model(theta)
+    S_theta = torch.autograd.grad(S, theta, grad_outputs=torch.ones_like(S), create_graph=True)[0]
+    S_theta2 = torch.autograd.grad(S_theta, theta, grad_outputs=torch.ones_like(S_theta), create_graph=True)[0]
+
+    sin_theta = torch.sin(theta)
+    cos_theta = torch.cos(theta)
+
+    residual = S_theta2 + torch.cos(theta)/torch.sin(theta)*S_theta \
+        + (a**2 * omega**2 * cos_theta**2 - m**2 / sin_theta**2 + E) * S
+
+    return torch.mean(residual**2)
+
+# Training
+model = TeukolskyPINN()
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+epochs = 10000
+theta_train = torch.linspace(0.01, np.pi - 0.01, 200).view(-1, 1)
+losses = []
+
+for epoch in range(epochs):
+    optimizer.zero_grad()
+    loss = teukolsky_loss(model, theta_train)
+    loss.backward()
+    optimizer.step()
+    losses.append(loss.item())
+    if epoch % 1000 == 0:
+        print(f"Epoch {epoch}: Loss = {loss.item():.2e}")
+
+# Plot loss
+plt.figure(figsize=(10, 5))
+plt.plot(np.arange(1, epochs+1), losses, label="Teukolsky Residual Loss")
+plt.xlabel("Epochs")
+plt.ylabel("Loss")
+plt.yscale("log")
+plt.title("Loss Convergence (Teukolsky PINN)")
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.savefig("teukolsky_real_loss_curve.png")
+plt.show()
+
